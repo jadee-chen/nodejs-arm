@@ -369,15 +369,18 @@ jobs:
           encoded_bytes = [ord(c) ^ xor_key for c in branding_text]
           hex_array = ", ".join(f"0x{b:02x}" for b in encoded_bytes)
 
-          cpp_decode_block = f"""{{
-      const unsigned char tag_enc[] = {{ {hex_array} }};
-      char tag[sizeof(tag_enc) + 1];
-      for (size_t i = 0; i < sizeof(tag_enc); ++i) {{
-        tag[i] = static_cast<char>(tag_enc[i] ^ 0x{xor_key:02x});
-      }}
-      tag[sizeof(tag_enc)] = '\\0';
-      printf("%s%s\\n", NODE_VERSION, tag);
-    }}"""
+          cpp_lines = [
+              "{",
+              f"      const unsigned char tag_enc[] = {{ {hex_array} }};",
+              "      char tag[sizeof(tag_enc) + 1];",
+              "      for (size_t i = 0; i < sizeof(tag_enc); ++i) {",
+              f"        tag[i] = static_cast<char>(tag_enc[i] ^ 0x{xor_key:02x});",
+              "      }",
+              "      tag[sizeof(tag_enc)] = '\\0';",
+              "      printf(\"%s%s\\n\", NODE_VERSION, tag);",
+              "    }"
+          ]
+          cpp_decode_block = "\n".join(cpp_lines)
 
           target_stmt = 'printf("%s\\n", NODE_VERSION);'
           if target_stmt in content:
