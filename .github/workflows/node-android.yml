@@ -15,6 +15,13 @@ on:
         options:
           - 'v26.x'       # Latest release line
           - 'v24.x'       # LTS (Krypton)
+      build_mode:
+        description: 'Build mode'
+        type: choice
+        default: 'standalone'
+        options:
+          - 'standalone'  # Standalone static CLI binary (node)
+          - 'shared'      # Shared library (lib<name>.so / libnode.so)
       lib_name:
         description: 'Library name — output will be lib<n>.so (e.g. "aurora" → libaurora.so)'
         required: false
@@ -180,9 +187,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ matrix.abi }}-${{ env.NODE_REF }}-${{ inputs.profile || 'balanced' }}-${{ github.run_id }}
+          key: ccache-${{ matrix.abi }}-${{ env.NODE_REF }}-${{ inputs.profile || 'balanced' }}-${{ inputs.build_mode || 'standalone' }}-${{ github.run_id }}
           restore-keys: |
-            ccache-${{ matrix.abi }}-${{ env.NODE_REF }}-${{ inputs.profile || 'balanced' }}-
+            ccache-${{ matrix.abi }}-${{ env.NODE_REF }}-${{ inputs.profile || 'balanced' }}-${{ inputs.build_mode || 'standalone' }}-
 
       # ---------- 2. Host build tools ----------
       - name: Install host build tools
@@ -1367,12 +1374,18 @@ jobs:
             NODEEXTRA="--without-corepack"
           fi
 
+          SHARED_FLAG=""
+          if [ "${{ inputs.build_mode || 'standalone' }}" = "shared" ]; then
+            SHARED_FLAG="--shared"
+          fi
+
           ./configure \
             --cross-compiling \
             --dest-os=android \
             --dest-cpu=${{ matrix.dest_cpu }} \
             --with-intl=none \
             --without-npm \
+            $SHARED_FLAG \
             $NODEEXTRA \
             $OPENSSL_ASM_FLAG \
             $EXTRA_FLAGS
@@ -1410,50 +1423,72 @@ jobs:
       # comment for why staging was consolidated into one place rather
       # than split across two steps that each had to independently agree
       # on a naming scheme.
-      - name: Package node (fully static single binary + libc++_shared.so)
+      - name: Package node (standalone or shared + libc++_shared.so)
         if: success()
         working-directory: node
         run: |
           TC="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64"
+          BUILD_MODE="${{ inputs.build_mode || 'standalone' }}"
 
           echo "Directory structure under out/Release:"
           find out/Release -maxdepth 3 -type d
 
-          if [ ! -f "out/Release/node" ]; then
-            echo "::error::out/Release/node not found — build step may have failed"
-            exit 1
-          fi
+          if [ "$BUILD_MODE" = "shared" ]; then
+            SO_PATH="$(find out/Release -name "libnode.so" | head -n1)"
+            if [ -z "$SO_PATH" ] || [ ! -f "$SO_PATH" ]; then
+              echo "::error::libnode.so not found under out/Release — build step may have failed"
+              exit 1
+            fi
+            echo "Found shared library: $SO_PATH"
+            cp "$SO_PATH" "lib${LIB_NAME}.so"
+            "$TC/bin/llvm-strip" --strip-unneeded "lib${LIB_NAME}.so"
 
-          "$TC/bin/llvm-readelf" -h "out/Release/node" | grep -E 'Class|Machine|Type'
+            echo "---- ELF type check (lib${LIB_NAME}.so) ----"
+            "$TC/bin/llvm-readelf" -h "lib${LIB_NAME}.so" | grep -E 'Class|Machine|Type'
 
-          if [ ! -e node ] || [ "$(readlink -f out/Release/node)" != "$(readlink -f node)" ]; then
-            cp out/Release/node node
+            if [ -f "out/Release/node" ]; then
+              cp out/Release/node node
+              "$TC/bin/llvm-strip" --strip-all node
+            fi
           else
-            echo "out/Release/node and node are already the same file, skipping copy"
-          fi
+            if [ ! -f "out/Release/node" ]; then
+              echo "::error::out/Release/node not found — build step may have failed"
+              exit 1
+            fi
 
-          # --export-dynamic marks symbols via .dynsym, so strip-all is safe.
-          "$TC/bin/llvm-strip" --strip-all node
+            "$TC/bin/llvm-readelf" -h "out/Release/node" | grep -E 'Class|Machine|Type'
 
-          echo "---- ELF type check ----"
-          "$TC/bin/llvm-readelf" -h node | grep -E 'Class|Machine|Type'
-          echo "---- Exported dynamic symbol count ----"
-          "$TC/bin/llvm-readelf" --dyn-syms node | wc -l
+            if [ ! -e node ] || [ "$(readlink -f out/Release/node)" != "$(readlink -f node)" ]; then
+              cp out/Release/node node
+            else
+              echo "out/Release/node and node are already the same file, skipping copy"
+            fi
 
-          # ---- HARD CHECK: node itself must stay fully static/standalone ----
-          echo "---- NEEDED entries (must NOT contain libc++_shared.so) ----"
-          NEEDED="$("$TC/bin/llvm-readelf" -d node | grep NEEDED || true)"
-          echo "$NEEDED"
+            # --export-dynamic marks symbols via .dynsym, so strip-all is safe.
+            "$TC/bin/llvm-strip" --strip-all node
 
-          if echo "$NEEDED" | grep -q 'libc++_shared'; then
-            echo "::error::node still links dynamically against libc++_shared.so. The -static-libstdc++ flag did not take effect. Inspect the link command above."
-            exit 1
+            echo "---- ELF type check ----"
+            "$TC/bin/llvm-readelf" -h node | grep -E 'Class|Machine|Type'
+            echo "---- Exported dynamic symbol count ----"
+            "$TC/bin/llvm-readelf" --dyn-syms node | wc -l
+
+            # ---- HARD CHECK: node itself must stay fully static/standalone ----
+            echo "---- NEEDED entries (must NOT contain libc++_shared.so) ----"
+            NEEDED="$("$TC/bin/llvm-readelf" -d node | grep NEEDED || true)"
+            echo "$NEEDED"
+
+            if echo "$NEEDED" | grep -q 'libc++_shared'; then
+              echo "::error::node still links dynamically against libc++_shared.so. The -static-libstdc++ flag did not take effect. Inspect the link command above."
+              exit 1
+            fi
           fi
 
           # ---- Verify ELF hash table is intact ----
-          READELF_OUT="$("$TC/bin/llvm-readelf" -d node 2>&1)"
+          TARGET_ELF="node"
+          if [ "$BUILD_MODE" = "shared" ]; then TARGET_ELF="lib${LIB_NAME}.so"; fi
+          READELF_OUT="$("$TC/bin/llvm-readelf" -d "$TARGET_ELF" 2>&1)"
           if ! echo "$READELF_OUT" | grep -qE '\(GNU_HASH\)|\(HASH\)'; then
-            echo "::error::'node' has neither DT_HASH nor DT_GNU_HASH — will fail to load on-device."
+            echo "::error::'$TARGET_ELF' has neither DT_HASH nor DT_GNU_HASH — will fail to load on-device."
             echo "$READELF_OUT"
             exit 1
           fi
@@ -1465,8 +1500,8 @@ jobs:
           esac
           cp "$TC/sysroot/usr/lib/${SYSROOT_TRIPLE}/libc++_shared.so" .
 
-          echo "---- node + libc++_shared.so ready in $(pwd) ----"
-          ls -lh node libc++_shared.so
+          echo "---- packaged files ready in $(pwd) ----"
+          ls -lh node libc++_shared.so lib*.so 2>/dev/null || ls -lh
 
       # ---------- 6. Stage and upload one combined artifact per ABI ----------
       # FIXED 2026-07-23: previously this was two separate upload-artifact
@@ -1523,9 +1558,21 @@ jobs:
           # release zip for this ABI, nothing added or renamed later.
           STAGE_DIR="../${LIB_NAME}-v${RESOLVED_NODE_VERSION}-android-${{ matrix.abi }}"
           mkdir -p "$STAGE_DIR"
+          BUILD_MODE="${{ inputs.build_mode || 'standalone' }}"
 
-          cp node "$STAGE_DIR/node"
-          chmod +x "$STAGE_DIR/node"
+          if [ "$BUILD_MODE" = "shared" ]; then
+            if [ -f "lib${LIB_NAME}.so" ]; then
+              cp "lib${LIB_NAME}.so" "$STAGE_DIR/lib${LIB_NAME}.so"
+            fi
+            if [ -f node ]; then
+              cp node "$STAGE_DIR/node"
+              chmod +x "$STAGE_DIR/node"
+            fi
+          else
+            cp node "$STAGE_DIR/node"
+            chmod +x "$STAGE_DIR/node"
+          fi
+
           cp libc++_shared.so "$STAGE_DIR/libc++_shared.so"
 
           # ---- Package Node.js headers into the same staged directory ----
@@ -1747,6 +1794,7 @@ jobs:
             | Node.js version | `${{ env.RESOLVED_NODE_VERSION }}` |
             | Requested ref | `${{ env.NODE_REF }}` |
             | Artifact label | `${{ env.LIB_NAME }}` |
+            | Build mode | `${{ inputs.build_mode || 'standalone' }}` |
             | Build profile | `${{ inputs.profile || 'balanced' }}` |
             | NDK version | `${{ env.NDK_VERSION }}` |
             | Trigger | `${{ github.event_name }}` |
