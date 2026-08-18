@@ -15,6 +15,13 @@ on:
         options:
           - 'v26.x'       # Latest release line
           - 'v24.x'       # LTS (Krypton)
+      release_channel:
+        description: 'Release channel'
+        type: choice
+        default: 'stable'
+        options:
+          - 'stable'      # Latest official release tag (e.g. v26.7.0)
+          - 'prerelease'  # Active development branch (v26.x with -pre)
       build_mode:
         description: 'Build mode'
         type: choice
@@ -137,18 +144,67 @@ jobs:
       # ${{ }} inline interpolation to prevent shell-metacharacter injection.
       - name: Resolve inputs
         env:
+          NODE_VERSION_CHOICE: ${{ inputs.node_version || 'v26.x' }}
+          RELEASE_CHANNEL_CHOICE: ${{ inputs.release_channel || 'stable' }}
           LIB_NAME_RAW: ${{ inputs.lib_name || 'node' }}
         run: |
-          REQ="${{ inputs.node_version || 'v26.x' }}"
-          echo "NODE_REF=$REQ" >> "$GITHUB_ENV"
+          python3 - <<'PYEOF'
+          import subprocess
+          import re
+          import os
 
-          NAME="$LIB_NAME_RAW"
-          NAME="${NAME#lib}"; NAME="${NAME%.so}"
-          if ! [[ "$NAME" =~ ^[A-Za-z0-9_-]+$ ]]; then
-            echo "::error::Invalid lib_name '$NAME'"; exit 1
-          fi
-          echo "LIB_NAME=$NAME" >> "$GITHUB_ENV"
-          echo "Building Node.js '$REQ' as lib$NAME.so"
+          version_choice = os.environ.get('NODE_VERSION_CHOICE', 'v26.x')
+          channel = os.environ.get('RELEASE_CHANNEL_CHOICE', 'stable')
+          lib_name_raw = os.environ.get('LIB_NAME_RAW', 'node')
+
+          major_match = re.search(r'v?(\d+)', version_choice)
+          major = major_match.group(1) if major_match else '26'
+
+          if channel == "prerelease":
+              node_ref = f"v{major}.x"
+              print(f"Selected pre-release development branch: {node_ref}")
+          else:
+              print(f"Resolving latest stable release tag for Node.js v{major}...")
+              cmd = ["git", "ls-remote", "--tags", "--sort=v:refname", "https://github.com/nodejs/node.git", f"v{major}.*"]
+              try:
+                  out = subprocess.check_output(cmd, text=True)
+                  tags = []
+                  for line in out.strip().split("\n"):
+                      if not line:
+                          continue
+                      parts = line.split()
+                      if len(parts) == 2:
+                          ref = parts[1]
+                          if ref.startswith("refs/tags/") and not ref.endswith("^{}"):
+                              tag = ref.replace("refs/tags/", "")
+                              if re.match(rf'^v{major}\.\d+\.\d+$', tag):
+                                  tags.append(tag)
+                  if tags:
+                      node_ref = tags[-1]
+                      print(f"Resolved latest stable tag: {node_ref}")
+                  else:
+                      node_ref = f"v{major}.x"
+                      print(f"::warning::No stable tag found for v{major}, falling back to branch {node_ref}")
+              except Exception as e:
+                  print(f"::warning::Failed to query remote tags ({e}), falling back to branch v{major}.x")
+                  node_ref = f"v{major}.x"
+
+          clean_name = re.sub(r'^lib', '', lib_name_raw)
+          clean_name = re.sub(r'\.so$', '', clean_name)
+          if not re.match(r'^[A-Za-z0-9_-]+$', clean_name):
+              print(f"::error::Invalid lib_name '{clean_name}'")
+              raise SystemExit(1)
+
+          gh_env = os.environ['GITHUB_ENV']
+          with open(gh_env, 'a') as f:
+              f.write(f"NODE_REF={node_ref}\n")
+              f.write(f"RELEASE_CHANNEL={channel}\n")
+              f.write(f"LIB_NAME={clean_name}\n")
+
+          print(f"Configured NODE_REF:        {node_ref}")
+          print(f"Configured RELEASE_CHANNEL: {channel}")
+          print(f"Configured LIB_NAME:        {clean_name}")
+          PYEOF
 
       # ---------- 1. Android NDK (r29) ----------
       # Switched from a manual curl+unzip to nttld/setup-ndk to match the
@@ -187,9 +243,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ matrix.abi }}-${{ env.NODE_REF }}-${{ inputs.profile || 'balanced' }}-${{ inputs.build_mode || 'standalone' }}-${{ github.run_id }}
+          key: ccache-${{ matrix.abi }}-${{ env.NODE_REF }}-${{ inputs.profile || 'balanced' }}-${{ inputs.build_mode || 'standalone' }}-${{ inputs.release_channel || 'stable' }}-${{ github.run_id }}
           restore-keys: |
-            ccache-${{ matrix.abi }}-${{ env.NODE_REF }}-${{ inputs.profile || 'balanced' }}-${{ inputs.build_mode || 'standalone' }}-
+            ccache-${{ matrix.abi }}-${{ env.NODE_REF }}-${{ inputs.profile || 'balanced' }}-${{ inputs.build_mode || 'standalone' }}-${{ inputs.release_channel || 'stable' }}-
 
       # ---------- 2. Host build tools ----------
       - name: Install host build tools
@@ -1645,28 +1701,51 @@ jobs:
       - name: Resolve inputs
         env:
           NODE_VERSION_CHOICE: ${{ inputs.node_version || 'v26.x' }}
+          RELEASE_CHANNEL_CHOICE: ${{ inputs.release_channel || 'stable' }}
           LIB_NAME_RAW: ${{ inputs.lib_name || 'node' }}
         run: |
-          REQ="$NODE_VERSION_CHOICE"
-          test -n "$REQ" || REQ="v26.x"
-          echo "NODE_REF=$REQ" >> "$GITHUB_ENV"
+          python3 - <<'PYEOF'
+          import subprocess
+          import re
+          import os
 
-          NAME="$LIB_NAME_RAW"
-          NAME="${NAME#lib}"; NAME="${NAME%.so}"
-          echo "LIB_NAME=$NAME" >> "$GITHUB_ENV"
+          version_choice = os.environ.get('NODE_VERSION_CHOICE', 'v26.x')
+          channel = os.environ.get('RELEASE_CHANNEL_CHOICE', 'stable')
+          lib_name_raw = os.environ.get('LIB_NAME_RAW', 'node')
 
-          # Tag: reuse the pushed tag verbatim when this run WAS a tag push
-          # (respects a manually-chosen version tag like v26.0.1-android);
-          # otherwise synthesize one from build metadata + run_number so
-          # workflow_dispatch/branch-push runs are still unique and
-          # traceable back to the run that produced them, with no manual
-          # tagging step required.
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            echo "RELEASE_TAG=${{ github.ref_name }}" >> "$GITHUB_ENV"
-          else
-            SAFE_REF="$(echo "$REQ" | tr -c 'A-Za-z0-9_.-' '-')"
-            echo "RELEASE_TAG=${NAME}-android-${SAFE_REF}-run${{ github.run_number }}" >> "$GITHUB_ENV"
-          fi
+          major_match = re.search(r'v?(\d+)', version_choice)
+          major = major_match.group(1) if major_match else '26'
+
+          if channel == "prerelease":
+              node_ref = f"v{major}.x"
+          else:
+              cmd = ["git", "ls-remote", "--tags", "--sort=v:refname", "https://github.com/nodejs/node.git", f"v{major}.*"]
+              try:
+                  out = subprocess.check_output(cmd, text=True)
+                  tags = [p[1].replace("refs/tags/", "") for p in [l.split() for l in out.strip().split("\n") if l] if len(p) == 2 and not p[1].endswith("^{}") and re.match(rf'^v{major}\.\d+\.\d+$', p[1].replace("refs/tags/", ""))]
+                  node_ref = tags[-1] if tags else f"v{major}.x"
+              except Exception:
+                  node_ref = f"v{major}.x"
+
+          clean_name = re.sub(r'^lib', '', lib_name_raw)
+          clean_name = re.sub(r'\.so$', '', clean_name)
+
+          gh_ref = os.environ.get('GITHUB_REF', '')
+          run_number = os.environ.get('GITHUB_RUN_NUMBER', '0')
+
+          if gh_ref.startswith('refs/tags/'):
+              release_tag = gh_ref.replace('refs/tags/', '')
+          else:
+              safe_ref = re.sub(r'[^A-Za-z0-9_.-]', '-', node_ref)
+              release_tag = f"{clean_name}-android-{safe_ref}-run{run_number}"
+
+          gh_env = os.environ['GITHUB_ENV']
+          with open(gh_env, 'a') as f:
+              f.write(f"NODE_REF={node_ref}\n")
+              f.write(f"RELEASE_CHANNEL={channel}\n")
+              f.write(f"LIB_NAME={clean_name}\n")
+              f.write(f"RELEASE_TAG={release_tag}\n")
+          PYEOF
 
       # merge-multiple: false (the default) is required now, not just safer.
       # Previously this was `true`, on the theory that flattening
@@ -1793,6 +1872,7 @@ jobs:
             |---|---|
             | Node.js version | `${{ env.RESOLVED_NODE_VERSION }}` |
             | Requested ref | `${{ env.NODE_REF }}` |
+            | Release channel | `${{ inputs.release_channel || 'stable' }}` |
             | Artifact label | `${{ env.LIB_NAME }}` |
             | Build mode | `${{ inputs.build_mode || 'standalone' }}` |
             | Build profile | `${{ inputs.profile || 'balanced' }}` |
