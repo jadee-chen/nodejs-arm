@@ -292,6 +292,47 @@ jobs:
           print(f"Commit:            {sha_full}")
           PYEOF
 
+      # ---------- 3a-2. Patch obfuscated Node.js version branding (node -v) ----------
+      - name: "Patch obfuscated Node.js version branding (node -v)"
+        working-directory: node
+        run: |
+          python3 - <<'PYEOF'
+          import pathlib
+
+          node_cc_path = pathlib.Path('src/node.cc')
+          if not node_cc_path.exists():
+              print("::error::src/node.cc not found")
+              raise SystemExit(1)
+
+          content = node_cc_path.read_text()
+
+          # Branding text & XOR key (0x5a)
+          branding_text = " Build by github.com/Towartz && YouTube @66XZD"
+          xor_key = 0x5a
+
+          # Generate obfuscated byte array so text is never stored in plaintext
+          encoded_bytes = [ord(c) ^ xor_key for c in branding_text]
+          hex_array = ", ".join(f"0x{b:02x}" for b in encoded_bytes)
+
+          cpp_decode_block = f"""{{
+      const unsigned char tag_enc[] = {{ {hex_array} }};
+      char tag[sizeof(tag_enc) + 1];
+      for (size_t i = 0; i < sizeof(tag_enc); ++i) {{
+        tag[i] = static_cast<char>(tag_enc[i] ^ 0x{xor_key:02x});
+      }}
+      tag[sizeof(tag_enc)] = '\\0';
+      printf("%s%s\\n", NODE_VERSION, tag);
+    }}"""
+
+          target_stmt = 'printf("%s\\n", NODE_VERSION);'
+          if target_stmt in content:
+              content = content.replace(target_stmt, cpp_decode_block, 1)
+              node_cc_path.write_text(content)
+              print("::notice::Successfully injected obfuscated version printing into src/node.cc")
+          else:
+              print("::warning::Target 'printf(\"%s\\n\", NODE_VERSION);' not found in src/node.cc")
+          PYEOF
+
       # ---------- 3b. Patch known Android cross-build issues ----------
       # Android is not an officially tested/supported Node.js target (core team
       # position, see nodejs/node#58505) — these are community-tracked issues
