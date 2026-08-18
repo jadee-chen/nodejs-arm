@@ -15,11 +15,6 @@ on:
         options:
           - 'v26.x'       # Latest release line
           - 'v24.x'       # LTS (Krypton)
-          - 'custom'
-      custom_ref:
-        description: 'Custom git ref — only used when "custom" is selected'
-        required: false
-        default: ''
       lib_name:
         description: 'Library name — output will be lib<n>.so (e.g. "aurora" → libaurora.so)'
         required: false
@@ -130,17 +125,14 @@ jobs:
 
     steps:
       # ---------- 0. Resolve inputs ----------
-      # SECURITY: custom_ref and lib_name are free-text workflow_dispatch inputs.
-      # Read them through env: variables (resolved before the shell runs) instead of
+      # SECURITY: lib_name is a free-text workflow_dispatch input.
+      # Read it through env: variables (resolved before the shell runs) instead of
       # ${{ }} inline interpolation to prevent shell-metacharacter injection.
       - name: Resolve inputs
         env:
-          CUSTOM_REF_RAW: ${{ inputs.custom_ref || '' }}
           LIB_NAME_RAW: ${{ inputs.lib_name || 'node' }}
         run: |
           REQ="${{ inputs.node_version || 'v26.x' }}"
-          if [ "$REQ" = "custom" ]; then REQ="$CUSTOM_REF_RAW"; fi
-          if [ -z "$REQ" ]; then echo "::error::custom_ref is empty"; exit 1; fi
           echo "NODE_REF=$REQ" >> "$GITHUB_ENV"
 
           NAME="$LIB_NAME_RAW"
@@ -1606,11 +1598,9 @@ jobs:
       - name: Resolve inputs
         env:
           NODE_VERSION_CHOICE: ${{ inputs.node_version || 'v26.x' }}
-          CUSTOM_REF_RAW: ${{ inputs.custom_ref }}
           LIB_NAME_RAW: ${{ inputs.lib_name || 'node' }}
         run: |
           REQ="$NODE_VERSION_CHOICE"
-          if [ "$REQ" = "custom" ]; then REQ="$CUSTOM_REF_RAW"; fi
           test -n "$REQ" || REQ="v26.x"
           echo "NODE_REF=$REQ" >> "$GITHUB_ENV"
 
