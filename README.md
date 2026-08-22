@@ -2,127 +2,115 @@
 
 # Node.js for Android (ARM)
 
+**[ 🇺🇸 English ](README.md)** &nbsp;|&nbsp; **[ 🇮🇩 Bahasa Indonesia ](README.id.md)** &nbsp;|&nbsp; **[ 🇨🇳 简体中文 ](README.zh.md)**
+
+<br/>
+
 [![CI](https://img.shields.io/github/actions/workflow/status/Towartz/nodejs-arm/node-android.yml?branch=main&label=CI&logo=github)](https://github.com/Towartz/nodejs-arm/actions)
-[![Latest release](https://img.shields.io/badge/latest%20release-v26.x--run150-blue?logo=github)](https://github.com/Towartz/nodejs-arm/releases/tag/node-android-v26.x--run150)
+[![Latest release](https://img.shields.io/github/v/release/Towartz/nodejs-arm?logo=github&label=latest%20release)](https://github.com/Towartz/nodejs-arm/releases)
 [![NDK](https://img.shields.io/badge/NDK-r29-blue?logo=android)](https://developer.android.com/ndk)
 [![API](https://img.shields.io/badge/API-24%2B-brightgreen?logo=android)](https://developer.android.com/guide/topics/manifest/uses-sdk-element)
-[![Node](https://img.shields.io/badge/Node-v26.x-339933?logo=nodedotjs)](https://nodejs.org)
+[![Node](https://img.shields.io/badge/Node-v26.x%20%7C%20v24.x-339933?logo=nodedotjs)](https://nodejs.org)
 [![License](https://img.shields.io/github/license/Towartz/nodejs-arm)](LICENSE)
 
-通过 GitHub Actions 交叉编译的 Android ARM 独立 node 命令行程序。
+Automated GitHub Actions CI/CD cross-compiling **Node.js** (v26.x, v24.x LTS) for **Android ARM64** (`arm64-v8a`) and **ARM32** (`armeabi-v7a`).
 
-二进制文件完全静态链接 libc++，不依赖任何外部库。每个发布包都包含二进制文件、用于编译原生插件的 libc++_shared.so，以及完整的 N-API 编译头文件。
+Produces standalone statically linked executable binaries or shared `.so` libraries with libc++ and complete N-API header headers for building native C/C++ addons.
 
 </div>
 
 ---
 
-## 构建状态
+## 🌟 Key Features
 
-| ABI | 均衡模式 (JIT + -O3) | 速度模式 (LTO) | 体积模式 (V8 精简模式) |
-|---|---|---|---|
-| arm64-v8a | 已验证 | 已验证 | 已验证 |
-| armeabi-v7a | 可构建，实验性 | 实验性 | 实验性 |
-
-armeabi-v7a 仍属实验性质，原因是上游 V8 存在交叉编译缺陷。详情见 [nodejs/node#58975](https://github.com/nodejs/node/issues/58975)。该分支的失败不会影响 arm64-v8a 的构建结果。
-
----
-
-## 最新发布
-
-| 构建编号 | 日期 | 分支 | 触发方式 | ABI | 发布链接 |
-|---|---|---|---|---|---|
-| 132 | 2026-07-22 | main | push | arm64-v8a, armeabi-v7a | [node-android-v26.x--run132](https://github.com/Towartz/nodejs-arm/releases/tag/node-android-v26.x--run132) |
-| 130 | 2026-07-22 | main | push | arm64-v8a | [node-android-v26.x--run130](https://github.com/Towartz/nodejs-arm/releases/tag/node-android-v26.x--run130) |
-| 128 | 2026-07-20 | main | push | arm64-v8a | [运行 #29729197643](https://github.com/Towartz/nodejs-arm/actions/runs/29729197643) |
+- 📱 **Android 15 & 16 Ready**: Fully aligned with **16 KB page-size** requirements (`-Wl,-z,max-page-size=16384`).
+- 📦 **Dual Build Modes**:
+  - **Standalone** (Default): Standalone ELF executable (`node`), statically linked against `libc++`.
+  - **Shared**: Shared library (`libnode.so` or `lib<name>.so`) for embedding into Android apps via JNI / `System.loadLibrary()`.
+- 🏷️ **Release Channels**:
+  - **Stable** (Default): Automatically queries and builds the latest official release tag (e.g., `v26.7.0` or `v24.19.0`).
+  - **Pre-release**: Builds the active bleeding-edge development branch (`v26.x` / `v24.x`).
+- 🔒 **Runtime Obfuscated Branding**: Embeds custom runtime branding banners on `node -v` using in-memory XOR decoding without leaking plaintext strings in compiled ELF binaries or headers.
+- ⚡ **Optimized Toolchain**: Android NDK **r29** (Clang 21), host build on Ubuntu 24.04, ThinLTO parallel acceleration, and persistent `ccache` object caching.
 
 ---
 
-## 发布包内容
+## 📊 Architecture & Build Status
 
-每个 ABI 对应一个压缩包，内容如下。
+| ABI | Architecture | Balanced Mode (JIT + -O3) | Speed Mode (ThinLTO) | Size Mode (V8 Lite) | Status |
+|:---|:---|:---:|:---:|:---:|:---:|
+| **arm64-v8a** | 64-bit ARM | ✅ Verified | ✅ Verified | ✅ Verified | Primary / Production |
+| **armeabi-v7a** | 32-bit ARM | ⚠️ Experimental | ⚠️ Experimental | ⚠️ Experimental | Community Supported |
 
-| 压缩包内文件 | 作用 |
+> [!NOTE]
+> `armeabi-v7a` is community-supported and best-effort due to upstream V8 32-bit cross-compilation quirks ([nodejs/node#58975](https://github.com/nodejs/node/issues/58975)). Build failures on 32-bit do not block 64-bit ARM releases.
+
+---
+
+## 📦 Release Package Contents
+
+Each release asset archive (`<name>-v<version>-android-<abi>.zip`) contains a self-contained bundle for that ABI:
+
+| File / Directory | Description |
 |---|---|
-| node | 命令行二进制文件，完全静态、已剥离符号、PIE，可直接运行 |
-| libc++_shared.so | NDK 自带的 libc++ 副本，用于编译原生插件时使用 |
-| include/node/*.h | Node、V8、libuv 的头文件，加上 config.gypi，用于编译 N-API 插件 |
-
-此发布包不包含 libnode.so，node 二进制文件本身已是完全静态。如果你的 Android 应用需要通过 System.loadLibrary() 加载，请自行将文件重命名为 lib*.so 格式。
-
-### 自定义库名称
-
-在工作流输入中设置 lib_name，例如 aurora，生成结果会变成 aurora-android-<abi>.zip，对应头文件也会同步调整。
+| `node` | The compiled Node.js CLI binary (Position-Independent Executable `PIE`, stripped, all symbols exported via `-rdynamic`). |
+| `lib<name>.so` | *(Only in `shared` build mode)* The compiled shared library for embedding into Android applications. |
+| `libc++_shared.so` | Bundled unmodified NDK `libc++_shared.so` for building and linking native C++ addons downstream. |
+| `include/node/` | Complete Node.js, V8, and libuv C/C++ headers + `config.gypi` matching official header layouts for `node-gyp` and `node-addon-api`. |
 
 ---
 
-## 构建模式
+## ⚙️ Build Configuration Profiles
 
-| 模式 | 附加编译选项 | 适用场景 |
+| Profile | Compiler Flags | Description & Use Case |
 |---|---|---|
-| balanced | JIT + -O3 | 默认模式，运行速度最佳 |
-| speed | 追加 LTO | 速度提升 5% 到 15%，构建时间延长约一倍 |
-| size | 追加 v8-lite-mode | 更省内存，加密和 JS 运算速度降低 2 到 3 倍 |
+| **balanced** *(Default)* | JIT + `-O3` + `-g0` | Best general runtime performance, balanced memory footprint, fast build times. Recommended for Baileys, servers, and CLI tools. |
+| **speed** | ThinLTO (`-flto=thin`) | Link-Time Optimization with parallel code generation. Delivers 5–15% faster JS/crypto execution with low linker RAM overhead. |
+| **size** | `--v8-lite-mode` | Stripped V8 features for constrained embedded environments. Reduces RAM consumption at the cost of 2–3x slower execution. |
 
 ---
 
-## 工具链
+## 🛠️ Toolchain Details
 
-| 组件 | 版本 | 说明 |
+| Component | Version | Notes |
 |---|---|---|
-| NDK | r29 | Clang 21。2026-07-22 从 r27d（Clang 18）升级而来 |
-| 构建主机 | ubuntu-24.04 | 此版本 V8 要求 GCC 13.2 以上，必须使用此系统 |
-| 最低目标 API | android-24 | 对应 Android 7.0 及以上。Node v24 以上版本不可低于此值 |
-
-### 关键编译参数
-
-- `-static-libstdc++`：二进制文件独立运行，设备端无需 libc++_shared.so
-- `-Wl,-z,max-page-size=16384`：兼容 Android 15/16 的 16KB 页面大小
-- `-rdynamic` 与 `--export-dynamic`：保留所有符号，供原生插件调用
-- `--openssl-no-asm`：交叉编译时关闭 OpenSSL 汇编优化，具体原因见下方补丁说明
+| **Android NDK** | `r29` | Clang 21 toolchain with modern C++20/C++23 support. |
+| **Build Host** | `ubuntu-24.04` | Ubuntu 24.04 LTS runner with GCC 13.2+ for host tools. |
+| **Minimum API** | `android-24` | Android 7.0 (Nougat) and higher. Node.js v24+ requires minimum API 24. |
 
 ---
 
-## 已应用的补丁
+## 🧩 Patches Applied for Android
 
-Android 并非 Node.js 官方支持的目标平台。以下补丁用于确保交叉编译成功，每次 Node 主版本升级都需要重新检查。
+Android is not an officially supported target platform by the Node.js core team ([nodejs/node#58505](https://github.com/nodejs/node/issues/58505)). The following patches are automatically applied during CI:
 
-- 修复 libuv 在 Android 上的堆栈跟踪、trap handler 与 uv.gyp 配置
-- 为 std::atomic_ref 添加兼容实现，因 NDK 的 libc++ 尚未支持该特性
-- 修复 zlib 的 cpu_features 检测，用 getauxval() 替换 android_getCpuFeatures()
-- 将 regexp bytecode 中的 consteval 降级为 constexpr，规避旧版 Clang 的编译器缺陷
-- 修复 Turboshaft assembler 中的 CRTP 写法，适配 C++20 两阶段名称查找
-- 修复 wrappers-inl.h 中的 decltype 用法，兼容 NDK 版本的 Clang
-- 关闭 simdutf 的 atomic 相关代码路径，因 Android 的 libc++ 不支持该特性
-- 修复 OpenSSL 汇编目标选择逻辑，避免 ARM 构建误用 x86_64 汇编代码
-
-上游相关链接：
-
-- [nodejs/node#57748](https://github.com/nodejs/node/pull/57748)，来自 Termux 项目的 Android 补丁
-- [nodejs/node#58505](https://github.com/nodejs/node/issues/58505)，Android 测试失败记录
-- [nodejs/node#58975](https://github.com/nodejs/node/issues/58975)，32 位 arm 交叉编译中的 V8 缺陷
+- **libuv**: Android stack traces, POSIX time platform headers, and `uv.gyp` config fixes.
+- **V8 / libc++**: Added polyfills for `std::atomic_ref` and bypassed missing atomic symbols on NDK libc++.
+- **zlib**: Replaced legacy `android_getCpuFeatures()` with `getauxval(AT_HWCAP)` / `AT_HWCAP2` for hardware CRC32/PMULL detection.
+- **Clang Consteval Fix**: Downgraded accessor functions in `regexp-bytecodes-inl.h` from `consteval` to `constexpr` to avoid Clang immediate-escalation bugs.
+- **Turboshaft & Wrappers**: Fixed two-phase name lookup assertions in Turboshaft and `decltype` handling in `wrappers-inl.h`.
+- **OpenSSL ASM**: Corrected Android ARM64/ARM target detection in `openssl_asm.gypi` to prevent misidentifying Android as x86_64.
+- **ThinLTO**: Patched `common.gypi` to use `-flto=thin` for Clang, avoiding monolithic memory thrashing during linking.
 
 ---
 
-## 使用方法
+## 🚀 How to Trigger a Build
 
-打开 Actions 标签页，选择 Node.js for Android (ARM) 工作流，点击 Run workflow。你可以在这里设置 Node 版本、库名称和构建模式。
+1. Navigate to the **Actions** tab in this repository.
+2. Select the **Node.js for Android (ARM)** workflow.
+3. Click **Run workflow** and choose your desired parameters:
+   - **`node_version`**: `v26.x` or `v24.x`.
+   - **`release_channel`**: `stable` (official release tags) or `prerelease` (dev branches).
+   - **`build_mode`**: `standalone` (CLI executable) or `shared` (`.so` library).
+   - **`lib_name`**: Custom name prefix (e.g. `node` $\rightarrow$ `libnode.so` / `node-android-*.zip`).
+   - **`profile`**: `balanced`, `speed` (ThinLTO), or `size` (V8 Lite).
 
-推送到 main 分支同样会自动触发构建，构建完成后会自动发布到 GitHub Release，标签格式为 node-android-*。
-
----
-
-## 可用分支
-
-| 分支 | Node 版本 | NDK | Ubuntu | 状态 |
-|---|---|---|---|---|
-| main | v26.x | r29 | 24.04 | CI 正常运行 |
-| v24.x-lts | v24.x LTS | r29 | 24.04 | 已验证 |
+Every push to the `main` branch also triggers an automated build and attaches assets to a GitHub Release.
 
 ---
 
-## 许可证
+## 📄 License
 
-GPLv3 附加限制条款，完整内容见 LICENSE 文件。
+GPLv3 with additional terms. See [LICENSE](LICENSE) for details.
 
-由 [21_whiten (Towartz)](https://github.com/Towartz) 构建。
+Maintained by **[21_whiten (Towartz)](https://github.com/Towartz)**.
