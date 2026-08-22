@@ -119,7 +119,7 @@ jobs:
     # need no other changes, and gcc-multilib/g++-multilib for the
     # armeabi-v7a leg exist on 24.04 too.
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 360
     # armeabi-v7a is best-effort: upstream V8 cross-build for 32-bit targets on
     # x64 hosts has open bugs (nodejs/node#58975). Never let it block arm64.
     continue-on-error: ${{ matrix.experimental || false }}
@@ -237,7 +237,9 @@ jobs:
       - name: Configure ccache
         run: |
           echo "CCACHE_DIR=$HOME/.cache/ccache" >> "$GITHUB_ENV"
-          echo "CCACHE_MAXSIZE=2G" >> "$GITHUB_ENV"
+          echo "CCACHE_MAXSIZE=5G" >> "$GITHUB_ENV"
+          echo "CCACHE_COMPRESS=1" >> "$GITHUB_ENV"
+          echo "CCACHE_COMPRESSLEVEL=1" >> "$GITHUB_ENV"
 
       - name: Cache ccache directory
         uses: actions/cache@v4
@@ -246,6 +248,10 @@ jobs:
           key: ccache-${{ matrix.abi }}-${{ env.NODE_REF }}-${{ inputs.profile || 'balanced' }}-${{ inputs.build_mode || 'standalone' }}-${{ inputs.release_channel || 'stable' }}-${{ github.run_id }}
           restore-keys: |
             ccache-${{ matrix.abi }}-${{ env.NODE_REF }}-${{ inputs.profile || 'balanced' }}-${{ inputs.build_mode || 'standalone' }}-${{ inputs.release_channel || 'stable' }}-
+            ccache-${{ matrix.abi }}-${{ env.NODE_REF }}-${{ inputs.profile || 'balanced' }}-${{ inputs.build_mode || 'standalone' }}-
+            ccache-${{ matrix.abi }}-${{ env.NODE_REF }}-${{ inputs.profile || 'balanced' }}-
+            ccache-${{ matrix.abi }}-${{ env.NODE_REF }}-
+            ccache-${{ matrix.abi }}-
 
       # ---------- 2. Host build tools ----------
       - name: Install host build tools
@@ -1319,6 +1325,9 @@ jobs:
           # Target toolchain (API level via wrapper suffix == -DANDROID_PLATFORM=android-24)
           export CC="ccache $TC/bin/${{ matrix.target }}${{ env.MIN_API }}-clang"
           export CXX="ccache $TC/bin/${{ matrix.target }}${{ env.MIN_API }}-clang++"
+          # Disable debug symbols (-g0) on intermediate objects to save GBs of disk I/O and RAM
+          export CFLAGS="$CFLAGS -g0"
+          export CXXFLAGS="$CXXFLAGS -g0 -static-libstdc++"
           # Static-link libc++ -> node stays a standalone binary with no
           # libc++_shared.so runtime dependency. Whether this actually takes
           # effect depends on gyp's make-generator propagating LDFLAGS.target
@@ -1328,7 +1337,6 @@ jobs:
           # fails if node ends up dynamically linked after all. A copy of
           # libc++_shared.so is bundled as a separate file regardless (for
           # native-addon builds downstream), independent of that check.
-          export CXXFLAGS="$CXXFLAGS -static-libstdc++"
           export LDFLAGS="$LDFLAGS -static-libstdc++"
           export AR="$TC/bin/llvm-ar"
           export NM="$TC/bin/llvm-nm"
@@ -1352,17 +1360,20 @@ jobs:
           if [ "${{ matrix.dest_cpu }}" = "arm" ]; then
             export CC_host="ccache gcc -m32"
             export CXX_host="ccache g++ -m32"
+            export CFLAGS_host="-m32 -g0"
+            export CXXFLAGS_host="-m32 -g0"
+            export LDFLAGS_host="-m32"
+            HOST_ARCH_GYP="ia32"
           else
             export CC_host="ccache gcc"
             export CXX_host="ccache g++"
-          fi
-
-          if [ "${{ matrix.dest_cpu }}" = "arm" ]; then
-            export CFLAGS_host=-m32 CXXFLAGS_host=-m32 LDFLAGS_host=-m32
-            HOST_ARCH_GYP="ia32"
-          else
+            export CFLAGS_host="-g0"
+            export CXXFLAGS_host="-g0"
             HOST_ARCH_GYP="x64"
           fi
+
+          echo "---- Initial ccache stats (${{ matrix.abi }}) ----"
+          ccache -s || true
 
           # android_ndk_path is REQUIRED (node.gyp fails without it)
           export GYP_DEFINES="OS=android host_os=linux target_arch=${{ matrix.dest_cpu }} v8_target_arch=${{ matrix.dest_cpu }} android_target_arch=${{ matrix.dest_cpu }} android_ndk_path=${ANDROID_NDK_HOME} host_arch=$HOST_ARCH_GYP v8_host_arch=$HOST_ARCH_GYP"
