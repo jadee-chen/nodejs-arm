@@ -241,10 +241,12 @@ jobs:
           echo "CCACHE_COMPRESS=1" >> "$GITHUB_ENV"
           echo "CCACHE_COMPRESSLEVEL=1" >> "$GITHUB_ENV"
 
-      - name: Cache ccache directory
+      - name: Cache ccache & ThinLTO directory
         uses: actions/cache@v4
         with:
-          path: ${{ env.CCACHE_DIR }}
+          path: |
+            ${{ env.CCACHE_DIR }}
+            ~/.cache/thinlto
           key: ccache-${{ matrix.abi }}-${{ env.NODE_REF }}-${{ inputs.profile || 'balanced' }}-${{ inputs.build_mode || 'standalone' }}-${{ inputs.release_channel || 'stable' }}-${{ github.run_id }}
           restore-keys: |
             ccache-${{ matrix.abi }}-${{ env.NODE_REF }}-${{ inputs.profile || 'balanced' }}-${{ inputs.build_mode || 'standalone' }}-${{ inputs.release_channel || 'stable' }}-
@@ -694,6 +696,9 @@ jobs:
                 "            'cflags': [ '-fPIC', '-I<(android_ndk_path)/sources/android/cpufeatures' ],\n"
                 "            'ldflags': [ '-fPIC' ]\n"
                 "          }],", "")
+          patch('common.gypi',
+                "'lto': ' -flto ', # Clang",
+                "'lto': ' -flto=thin ', # Clang")
           patch('tools/gyp/pylib/gyp/generator/ninja.py',
                 "    \"SHARED_INTERMEDIATE_DIR\": \"$!PRODUCT_DIR/gen\",",
                 "    \"SHARED_INTERMEDIATE_DIR\": \"$!PRODUCT_DIR/$|OBJ/gen\",")
@@ -1397,8 +1402,14 @@ jobs:
 
           EXTRA_FLAGS=""
           case "${{ inputs.profile || 'balanced' }}" in
-            speed) EXTRA_FLAGS="--enable-lto" ;;
-            size)  EXTRA_FLAGS="--v8-lite-mode" ;;
+            speed)
+              EXTRA_FLAGS="--enable-lto"
+              mkdir -p "$HOME/.cache/thinlto"
+              export LDFLAGS="$LDFLAGS -Wl,--thinlto-cache-dir=$HOME/.cache/thinlto -Wl,--thinlto-jobs=2"
+              ;;
+            size)
+              EXTRA_FLAGS="--v8-lite-mode"
+              ;;
           esac
 
           # ---- Crypto perf: use OpenSSL's asm-optimized routines where safe ----
