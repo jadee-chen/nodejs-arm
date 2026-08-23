@@ -699,6 +699,29 @@ jobs:
           patch('common.gypi',
                 "'lto': ' -flto ', # Clang",
                 "'lto': ' -flto=thin ', # Clang")
+          old_lto_block = (
+              "          ['enable_lto==\"true\"', {\n"
+              "            'cflags': ['<(lto)'],\n"
+              "            'ldflags': ['<(lto)'],\n"
+              "            'xcode_settings': {\n"
+              "              'LLVM_LTO': 'YES',\n"
+              "            },\n"
+              "          }],"
+          )
+          new_lto_block = (
+              "          ['enable_lto==\"true\"', {\n"
+              "            'target_conditions': [\n"
+              "              ['_toolset==\"target\"', {\n"
+              "                'cflags': ['<(lto)'],\n"
+              "                'ldflags': ['<(lto)'],\n"
+              "                'xcode_settings': {\n"
+              "                  'LLVM_LTO': 'YES',\n"
+              "                },\n"
+              "              }],\n"
+              "            ],\n"
+              "          }],"
+          )
+          patch('common.gypi', old_lto_block, new_lto_block)
           patch('tools/gyp/pylib/gyp/generator/ninja.py',
                 "    \"SHARED_INTERMEDIATE_DIR\": \"$!PRODUCT_DIR/gen\",",
                 "    \"SHARED_INTERMEDIATE_DIR\": \"$!PRODUCT_DIR/$|OBJ/gen\",")
@@ -1800,7 +1823,6 @@ jobs:
           pattern: ${{ env.LIB_NAME }}-v*-android-*
           path: dist
           merge-multiple: false
-          if-no-artifact-found: warn  # armeabi-v7a is experimental — its artifact may legitimately be absent
 
       - name: List downloaded artifacts
         run: ls -lhR dist || echo "::warning::no artifacts downloaded — did every matrix leg fail?"
