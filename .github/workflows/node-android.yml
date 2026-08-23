@@ -355,19 +355,12 @@ jobs:
           print(f"Commit:            {sha_full}")
           PYEOF
 
-      # ---------- 3a-2. Patch obfuscated Node.js version branding (node -v) ----------
-      - name: "Patch obfuscated Node.js version branding (node -v)"
+      # ---------- 3a-2. Patch obfuscated Node.js version branding (node -v & process.nodever) ----------
+      - name: "Patch obfuscated Node.js version branding (node -v & process.nodever)"
         working-directory: node
         run: |
           python3 - <<'PYEOF'
           import pathlib
-
-          node_cc_path = pathlib.Path('src/node.cc')
-          if not node_cc_path.exists():
-              print("::error::src/node.cc not found")
-              raise SystemExit(1)
-
-          content = node_cc_path.read_text()
 
           # Branding text & XOR key (0x5a)
           branding_text = " Build by github.com/Towartz && YouTube @66XZD"
@@ -377,6 +370,13 @@ jobs:
           encoded_bytes = [ord(c) ^ xor_key for c in branding_text]
           hex_array = ", ".join(f"0x{b:02x}" for b in encoded_bytes)
 
+          # 1. Patch src/node.cc for `node -v` CLI
+          node_cc_path = pathlib.Path('src/node.cc')
+          if not node_cc_path.exists():
+              print("::error::src/node.cc not found")
+              raise SystemExit(1)
+
+          content = node_cc_path.read_text()
           cpp_lines = [
               "{",
               f"      const unsigned char tag_enc[] = {{ {hex_array} }};",
@@ -397,6 +397,44 @@ jobs:
               print("::notice::Successfully injected obfuscated version printing into src/node.cc")
           else:
               print("::warning::Target 'printf(\"%s\\n\", NODE_VERSION);' not found in src/node.cc")
+
+          # 2. Patch src/node_process_object.cc for `process.nodever`
+          proc_obj_path = pathlib.Path('src/node_process_object.cc')
+          if proc_obj_path.exists():
+              content_proc = proc_obj_path.read_text()
+              cpp_proc_lines = [
+                  "  // process.version",
+                  "  READONLY_PROPERTY(",
+                  "      process, \"version\", FIXED_ONE_BYTE_STRING(isolate, NODE_VERSION));",
+                  "",
+                  "  // process.nodever (obfuscated branding)",
+                  "  {",
+                  f"    const unsigned char tag_enc[] = {{ {hex_array} }};",
+                  "    char full_nodever[sizeof(NODE_VERSION) + sizeof(tag_enc) + 1];",
+                  "    snprintf(full_nodever, sizeof(full_nodever), \"%s\", NODE_VERSION);",
+                  "    char* tag_ptr = full_nodever + strlen(NODE_VERSION);",
+                  "    for (size_t i = 0; i < sizeof(tag_enc); ++i) {",
+                  f"      tag_ptr[i] = static_cast<char>(tag_enc[i] ^ 0x{xor_key:02x});",
+                  "    }",
+                  "    tag_ptr[sizeof(tag_enc)] = '\\0';",
+                  "    READONLY_PROPERTY(",
+                  "        process, \"nodever\", OneByteString(isolate, full_nodever));",
+                  "  }"
+              ]
+              cpp_proc_block = "\n".join(cpp_proc_lines)
+              target_proc_stmt = (
+                  "  // process.version\n"
+                  "  READONLY_PROPERTY(\n"
+                  "      process, \"version\", FIXED_ONE_BYTE_STRING(isolate, NODE_VERSION));"
+              )
+              if target_proc_stmt in content_proc:
+                  content_proc = content_proc.replace(target_proc_stmt, cpp_proc_block, 1)
+                  proc_obj_path.write_text(content_proc)
+                  print("::notice::Successfully injected process.nodever into src/node_process_object.cc")
+              else:
+                  print("::warning::Target process.version statement not found in src/node_process_object.cc")
+          else:
+              print("::warning::src/node_process_object.cc not found")
           PYEOF
 
       # ---------- 3b. Patch known Android cross-build issues ----------
