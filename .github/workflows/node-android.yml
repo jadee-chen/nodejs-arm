@@ -1527,6 +1527,7 @@ jobs:
             --dest-cpu=${{ matrix.dest_cpu }} \
             --with-intl=none \
             --without-npm \
+            --v8-disable-temporal-support \
             $SHARED_FLAG \
             $NODEEXTRA \
             $OPENSSL_ASM_FLAG \
