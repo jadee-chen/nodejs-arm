@@ -1525,7 +1525,7 @@ jobs:
             --cross-compiling \
             --dest-os=android \
             --dest-cpu=${{ matrix.dest_cpu }} \
-            --with-intl=none \
+            --with-intl=small-icu \
             --without-npm \
             --v8-disable-temporal-support \
             $SHARED_FLAG \
